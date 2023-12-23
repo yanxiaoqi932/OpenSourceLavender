@@ -115,22 +115,31 @@ def gen_init_config(app_num:int=0, num_core:int=0, num_llc:int=0, num_mb:int=0,
     return [core_config, llc_config, mb_config]
 
 def perform_resource_partitioning(config, group_list, app_list):
-    perform_core(config[0], group_list, app_list)
-    perform_llc(config[1], group_list, app_list)
-    perform_mb(config[2], group_list, app_list)
+     # Use taskset, cat and mba to allocate resources to jobs
+    ipc_list = allocate_resource(config, group_list, app_list)
     
 def get_now_ipc(app_list, core_config):
     ipc_list, th = [], []
     for i in range(len(app_list)):
+        # Use Perf tool to get the values of all jobs' selected PMCs
         i, t = perf(app_list[i], core_config[i])
         ipc_list.append(i); th.append(t)
     return th, ipc_list
 
 def LatinSample(core_space, llc_space=0, mb_space=0):
-    core_config = sample(core_space)
-    llc_config = sample(llc_space)
-    mb_config = sample(mb_space)
-    return [core_config, llc_config, mb_config]
-
+    return sample(core_space, llc_space, mb_space)
+    
 def get_best_config(rewards):
     return np.argmax(rewards) 
+
+def split_averagely(nof_units:int, nof_clusters:int) -> List[int]:
+    each_clu_units = nof_units // nof_clusters
+    res_clu_units = nof_units % nof_clusters
+    units_clu = [each_clu_units] * (nof_clusters-1)
+    if res_clu_units >= each_clu_units:
+        for i in range(res_clu_units):
+            units_clu[i]+=1
+        units_clu.append(each_clu_units)
+    else:
+        units_clu.append(each_clu_units+res_clu_units)
+    return units_clu
