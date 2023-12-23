@@ -83,8 +83,7 @@ def gen_configs_recursively_fix(num_res:int, num_apps:int) -> List[List[int]]:
 
 
 def gen_init_config(app_num:int=0, num_core:int=0, num_llc:int=0, num_mb:int=0,
-                    core_space:List[List[int]]=[], llc_space:List[List[int]]=[], mb_space:List[List[int]]=[]) \
-                    -> Tuple[List[int], List[int], List[int], int, List[int], List[int]]:
+                    core_space:List[List[int]]=[], llc_space:List[List[int]]=[], mb_space:List[List[int]]=[]):
     """
     create an initial resource plan.
     input: app number, core, llc and mb number
@@ -113,8 +112,25 @@ def gen_init_config(app_num:int=0, num_core:int=0, num_llc:int=0, num_mb:int=0,
             mb_arm = config_id
             break
 
-    if nof_llc != 0 and nof_mb != 0:
-        return core_config, llc_config, mb_config, core_arm, llc_arm, mb_arm
-    else:
-        return core_config, core_arm
+    return [core_config, llc_config, mb_config]
 
+def perform_resource_partitioning(config, group_list, app_list):
+    perform_core(config[0], group_list, app_list)
+    perform_llc(config[1], group_list, app_list)
+    perform_mb(config[2], group_list, app_list)
+    
+def get_now_ipc(app_list, core_config):
+    ipc_list, th = [], []
+    for i in range(len(app_list)):
+        i, t = perf(app_list[i], core_config[i])
+        ipc_list.append(i); th.append(t)
+    return th, ipc_list
+
+def LatinSample(core_space, llc_space=0, mb_space=0):
+    core_config = sample(core_space)
+    llc_config = sample(llc_space)
+    mb_config = sample(mb_space)
+    return [core_config, llc_config, mb_config]
+
+def get_best_config(rewards):
+    return np.argmax(rewards) 

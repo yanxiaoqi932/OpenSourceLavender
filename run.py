@@ -1,7 +1,8 @@
 import subprocess
 import os
 import sys
-from utils import refer_core, refer_llc, refer_mb, gen_configs_recursively_fix, gen_init_config
+from utils import gen_configs_recursively_fix, gen_init_config,\
+    perform_resource_partitioning, get_now_ipc, LatinSample, get_best_config
 
 DIRNAME = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(DIRNAME))
@@ -17,31 +18,24 @@ from utils import gen_configs_recursively_fix, gen_init_config, \
 
 
 def inter_group_ini_opt(group_list:List[List[str]], rounds:int, app_list:List[str]):
-    rewards = []; ipc_list = []; configs = []
+    rewards = []; ipc_lists = []; configs = []
     num_core_units = int(NUM_CORE / CORE_UNIT_SCALE)  
     core_space = gen_configs_recursively_fix(num_res=num_core_units, num_apps=NUM_GROUPS)
     llc_space = gen_configs_recursively_fix(num_res=NUM_LLC, num_apps=NUM_GROUPS)
     mb_space = gen_configs_recursively_fix(num_res=NUM_MB, num_apps=NUM_GROUPS)
 
-    core_allocation_list, core_allocation_list, core_allocation_list = \
-        gen_init_config(app_num=NUM_GROUPS, num_core=num_core_units, num_llc=NUM_LLC, num_mb=NUM_MB,
-                    core_space=core_space, llc_space=llc_space, mb_space=mb_space)   
-    run_bg_benchmark(app_list=app_list, core_allocation_list=core_allocation_list)
+    config = gen_init_config(app_num=NUM_GROUPS, num_core=num_core_units, num_llc=NUM_LLC, num_mb=NUM_MB,
+                    core_space=core_space, llc_space=llc_space, mb_space=mb_space)  
     
     for now_round in range(rounds):
         print(f"Start run {now_round}th round")
-        perform_resource_partitioning(core_allocation_list=core_allocation_list, 
-                                        llc_allocation_list=llc_allocation_list,
-                                        mb_allocation_list=mb_allocation_list,
-                                        group_list=group_list,
-                                        app_list=app_list, is_group=True)
-        reward, ipc_list = get_now_ipc(app_list=app_list, core_allocation_list=core_allocation_list)
+        perform_resource_partitioning(config,group_list,app_list)
+        reward, ipc_list = get_now_ipc(app_list, config[0])
         print(f'**********{now_round}th round, throughput:{reward}**********')
         
-        rewards.append(reward); ipc_list.append(app2group_ipc_list(ipc_list, group_list, app_list))
+        rewards.append(reward); ipc_lists.append(ipc_list)
         configs.append(config)
-        core_allocation_list, llc_allocation_list, mb_allocation_list, config = \
-                LatinSample(throughput=reward, core_space=core_space, llc_space=llc_space, mb_space=mb_space)
+        config = LatinSample(core_space=core_space, llc_space=llc_space, mb_space=mb_space)
     best_config, best_th, best_ipc_list = get_best_config(rewards, ipc_list)
     return best_config, best_th, best_ipc_list
 
@@ -77,31 +71,26 @@ def inter_group_gra_opt(best_config, best_th, best_ipc_list, rounds,
         else:
             have_changed = False
         
-        core_config = config[0]; llc_config = config[1]; mb_config = config[2]
-        core_allocation_list, llc_allocation_list, mb_allocation_list = \
-            config2allocation(CORE_UNIT_SCALE, core_config, llc_config, mb_config, group_list, app_list, NUM_LLC)
-        perform_resource_partitioning(core_allocation_list, llc_allocation_list, 
-                                        mb_allocation_list, group_list=group_list, app_list=app_list, is_group=True)
-        new_reward, new_ipc_list = get_now_ipc(app_list, core_allocation_list)
-        new_g_ipc_list = app2group_ipc_list(new_ipc_list, group_list, app_list)
+        perform_resource_partitioning(config, group_list=group_list, app_list=app_list, is_group=True)
+        new_reward, new_ipc_list = get_now_ipc(app_list, config)
         print(f'\n**********{now_round}th round, throughput:{new_reward}**********\n')
         
         if have_changed:
-            if new_g_ipc_list[h_group_id] < (1 - PERCENT_DECSEND) * b_ipc_list[h_group_id]:
+            if new_ipc_list[h_group_id] < (1 - PERCENT_DECSEND) * b_ipc_list[h_group_id]:
                 state_table[h_group_id, res_id, 1] = config[res_id][h_group_id] + 1
-            if new_g_ipc_list[l_group_id] < (1 + PERCENT_RAISE) * b_ipc_list[l_group_id]:
+            if new_ipc_list[l_group_id] < (1 + PERCENT_RAISE) * b_ipc_list[l_group_id]:
                 state_table[l_group_id, res_id, 0] = config[res_id][l_group_id] - 1
             if new_reward < b_th:
                 config[res_id][h_group_id] += 1; config[res_id][l_group_id] -= 1
             else:
-                b_ipc_list = new_g_ipc_list
+                b_ipc_list = new_ipc_list
                 b_th = new_reward
         else:
-            b_ipc_list = new_g_ipc_list
+            b_ipc_list = new_ipc_list
             b_th = new_reward
     return config, b_th, b_ipc_list
 
-def intra_group_ini_opt(group_list, rounds, app_list, g_core_config, llc_allocation_list, mb_allocation_list):
+def intra_group_ini_opt(group_list, rounds, app_list, g_core_config, llc_config, mb_config):
     rewards = []; ipc_lists = []; configs = []
     g_core_config = [c * CORE_UNIT_SCALE for c in g_core_config]
     all_core_space = []
@@ -113,28 +102,23 @@ def intra_group_ini_opt(group_list, rounds, app_list, g_core_config, llc_allocat
         core_config = \
             gen_init_config(app_num=num_apps, num_core=g_core_config[g_id], core_space=core_space)
         nonsort_all_core_config.append(core_config)
-    all_core_allocation_list = sort_group_configs(nonsort_all_core_config, group_list, app_list)
     for now_round in range(rounds):
-        perform_resource_partitioning(core_allocation_list=all_core_allocation_list, 
-                                      llc_allocation_list=llc_allocation_list,
-                                      mb_allocation_list=mb_allocation_list,
+        perform_resource_partitioning([core_config, llc_config, mb_config],
                                       group_list=group_list,
                                       app_list=app_list, is_group=False)
         r, ipc_list = get_now_ipc(app_list=app_list, core_allocation_list=all_core_allocation_list)
         print(f'**********{now_round}th round, reward:{r}**********')
-        all_reward = ipc2greward(ipc_list, group_list, app_list)
-        rewards.append(all_reward); ipc_lists.append(ipc_list); configs.append(core_config)
-        nonsort_all_core_config = []
+        rewards.append(r); ipc_lists.append(ipc_list); configs.append(core_config)
+        all_core_allocation_list = []
         for g in range(len(group_list)):
-            core_config = LatinSampleInterGroup(reward=all_reward[g], core_space=all_core_space[g])
-            nonsort_all_core_config.append(core_config)
-        all_core_allocation_list = sort_group_configs(nonsort_all_core_config, group_list, app_list)
-
+            core_config = LatinSample(core_space=all_core_space[g])[0]
+            all_core_allocation_list.append(core_config)
+        
     best_config, best_th, best_ipc_list = get_best_config(rewards, ipc_list)
     return best_config, best_th, best_ipc_list
 
 def intra_group_gra_opt(best_config, best_th, best_ipc_list, rounds:int,
-                        group_list, app_list, llc_allocation_list, mb_allocation_list):
+                        group_list, app_list, llc_config, mb_config):
     
     best_core_config = []; best_core_reward = []; best_core_ipc_list = []
         
@@ -171,36 +155,32 @@ def intra_group_gra_opt(best_config, best_th, best_ipc_list, rounds:int,
                 have_changed[g] = False
             all_h_app_id.append(h_app_id); all_l_app_id.append(l_app_id)
 
-        sort_core_config, core_allocation_list = sort_group_configs(all_core_config, group_list, app_list)
-        perform_resource_partitioning(core_allocation_list, llc_allocation_list, 
-                                        mb_allocation_list, group_list=group_list, app_list=app_list,
-                                        is_group=False)
-        new_reward, new_ipc_list = get_now_ipc(app_list, core_allocation_list)
-        range_config.append(sort_core_config); range_reward.append(new_reward); range_ipc_list.append(new_ipc_list)
+        perform_resource_partitioning([all_core_config, llc_config, mb_config], group_list=group_list, app_list=app_list)
+        new_reward, new_ipc_list = get_now_ipc(app_list, all_core_config)
+        range_config.append(all_core_config); range_reward.append(new_reward); range_ipc_list.append(new_ipc_list)
         print(f'**********{now_round}th round, reward:{new_reward}**********')
-        all_new_reward, all_new_ipc_lists = ipc2greward(new_ipc_list, group_list, app_list)
         
         for g in range(len(group_list)):
             h_app_id = all_h_app_id[g]; l_app_id = all_l_app_id[g]
             if have_changed[g]:
-                if all_new_ipc_lists[g][h_app_id] < PERCENT_DECSEND * all_b_ipc_list[g][h_app_id]:
+                if new_ipc_list[g][h_app_id] < PERCENT_DECSEND * all_b_ipc_list[g][h_app_id]:
                     state_table[g, h_app_id, 1] = all_core_config[g][h_app_id] + 1
-                if all_new_ipc_lists[g][l_app_id] < (1 + PERCENT_RAISE) * all_b_ipc_list[g][l_app_id]:
+                if new_ipc_list[g][l_app_id] < (1 + PERCENT_RAISE) * all_b_ipc_list[g][l_app_id]:
                     state_table[g, l_app_id, 0] = all_core_config[g][l_app_id] - 1
-                if all_new_reward[g] < all_b_reward[g]:
+                if new_reward[g] < all_b_reward[g]:
                     all_core_config[g][h_app_id] += 1; all_core_config[g][l_app_id] -= 1
                 else:
-                    all_b_ipc_list[g] = all_new_ipc_lists[g]
-                    all_b_reward[g] = all_new_reward[g]
+                    all_b_ipc_list[g] = new_ipc_list[g]
+                    all_b_reward[g] = new_reward[g]
             else:
-                all_b_ipc_list[g] = all_new_ipc_lists[g]
-                all_b_reward[g] = all_new_reward[g]
+                all_b_ipc_list[g] = new_ipc_list[g]
+                all_b_reward[g] = new_reward[g]
     
     best_id = np.argmax(np.array(range_reward))
     best_core_config.append(deepcopy(range_config[best_id]))
     best_core_reward.append(deepcopy(range_reward[best_id]))
     best_core_ipc_list.append(deepcopy(range_ipc_list[best_id]))
-    return best_core_config, best_core_reward, best_core_ipc_list,state_table
+    return best_core_config, best_core_reward, best_core_ipc_list
 
 
 def run(app_list:List[str], group_list:List[List[str]], g_1_rounds:int, g_2_rounds:int, 
@@ -210,27 +190,20 @@ def run(app_list:List[str], group_list:List[List[str]], g_1_rounds:int, g_2_roun
     config, b_th, b_ipc_list = \
         inter_group_gra_opt(best_config, best_th, best_ipc_list,
                             rounds=g_2_rounds, group_list=group_list, app_list=app_list)
-    core_allocation_list, llc_allocation_list, mb_allocation_list = \
-                config2allocation(config)
+    
 
     best_config, best_th, best_ipc_list = \
-        intra_group_ini_opt(group_list, a_1_rounds, app_list, config[0], llc_allocation_list, mb_allocation_list)
-    best_core_config, best_core_reward, best_core_ipc_list, state_table = \
+        intra_group_ini_opt(group_list, a_1_rounds, app_list, config[0], config[1], config[2])
+    best_core_config, best_core_reward, best_core_ipc_list = \
         intra_group_gra_opt(best_config, best_th, best_ipc_list, 
-                            a_2_rounds, group_list, app_list, llc_allocation_list, mb_allocation_list)
+                            a_2_rounds, group_list, app_list, config[1], config[2])
     best_config = [best_core_config, config[0], config[1]]
     return best_config
 
-def monitor(app_list, group_list, config, state_table):
-    last_state_table = state_table
+def monitor(app_list, group_list, config, ini_reward):
     while True:
-        core_allocation_list = refer_core(config[0])
-        llc_allocation_list = refer_llc(config[1], NUM_LLC)
-        mb_allocation_list = refer_mb(config[2])
-        perform_resource_partitioning(core_allocation_list=core_allocation_list, llc_allocation_list=llc_allocation_list,
-            mb_allocation_list=mb_allocation_list, app_list=app_list, group_list=group_list, is_group=False)
-        new_reward, new_ipc_list = get_now_ipc(app_list, core_allocation_list)
-        update_state_table(last_state_table, )
+        perform_resource_partitioning(config, app_list=app_list, group_list=group_list, is_group=False)
+        new_reward, new_ipc_list = get_now_ipc(app_list, config[0])
         
         intra_times = 0; inter_times = 0
         if new_reward >= ini_reward * PERCENT_GRA_INTRA:
@@ -245,7 +218,7 @@ def monitor(app_list, group_list, config, state_table):
             run(app_list, group_list, G_1_ROUNDS, G_2_ROUNDS, A_1_ROUNDS, A_2_ROUNDS)
             inter_times = 0
         elif intra_times >= START_GRA_ROUNDS:
-            intra_gra(new_reward, new_ipc_list, group_list, app_list)
+            intra_group_gra_opt(config, new_reward, new_ipc_list, group_list, app_list)
             intra_times = 0
 
 
@@ -253,7 +226,7 @@ if __name__ == "__main__":
     subprocess.run('sudo pqos -R', shell=True, capture_output=True)
     start = 0.0
 
-    colocation_list = []  # put in colocated jobs
+    colocation_list, app_list, group_list = [], [], []  # put in colocated jobs
     NUM_APPS = len(colocation_list) 
     NUM_GROUPS = 6
 
@@ -272,7 +245,8 @@ if __name__ == "__main__":
     PERCENT_RAISE = 0.1     
     PERCENT_GRA_INTRA = 0.85   
     PERCENT_GRA_INTER = 0.7 
+    START_GRA_ROUNDS = 3
 
-    best_config, state_table = run(app_list, group_list, G_1_ROUNDS, G_2_ROUNDS, A_1_ROUNDS, A_2_ROUNDS)
-    monitor(app_list, group_list, best_config, state_table)
+    best_config, ini_reward = run(app_list, group_list, G_1_ROUNDS, G_2_ROUNDS, A_1_ROUNDS, A_2_ROUNDS)
+    monitor(app_list, group_list, best_config, ini_reward)
 
