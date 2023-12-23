@@ -14,9 +14,6 @@ def refer_core(core_config:List[int], unit_scale:int = 1) -> List[str]:
     for i in range(len(core_config)):
         endpoint_right = endpoint_left + core_config[i] - 1
         core_list = list(range(endpoint_left, endpoint_right+1))
-        for j in range(len(core_list)):
-            if core_list[j] > 27:
-                core_list[j] += 28
         core_allocation_list[i] = ",".join([str(c) for c in core_list])
         endpoint_left = endpoint_right + 1
     return core_allocation_list
@@ -90,33 +87,29 @@ def gen_init_config(app_num:int=0, num_core:int=0, num_llc:int=0, num_mb:int=0,
     return: all resources' config, and corrsponding arms
     """
     nof_core = num_core; nof_llc = num_llc; nof_mb = num_mb
-    core_arm = 0; llc_arm = 0; mb_arm = 0
     
     core_config = split_averagely(nof_units=nof_core, nof_clusters=app_num)
     for config_id in range(len(core_space)):
         if core_config == core_space[config_id]:
-            core_arm = config_id
             break
 
     if nof_llc != 0:
         llc_config = split_averagely(nof_units=nof_llc, nof_clusters=app_num)
     for config_id in range(len(llc_space)):
         if llc_config == llc_space[config_id]:
-            llc_arm = config_id
             break
 
     if nof_mb != 0:
         mb_config = split_averagely(nof_units=nof_mb, nof_clusters=app_num)
     for config_id in range(len(mb_space)):
         if mb_config == mb_space[config_id]:
-            mb_arm = config_id
             break
 
     return [core_config, llc_config, mb_config]
 
 def perform_resource_partitioning(config, group_list, app_list):
-     # Use taskset, cat and mba to allocate resources to jobs
-    ipc_list = allocate_resource(config, group_list, app_list)
+    # Use taskset, cat and mba to allocate resources to jobs
+    allocate_resource(config, group_list, app_list)
     
 def get_now_ipc(app_list, core_config):
     ipc_list, th = [], []
