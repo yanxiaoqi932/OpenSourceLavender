@@ -1,20 +1,15 @@
 import subprocess
 import os
 import sys
-from utils import gen_configs_recursively_fix, gen_init_config,\
-    perform_resource_partitioning, get_now_ipc, LatinSample, get_best_config
+import numpy as np
+from typing import List
+from copy import deepcopy
 
 DIRNAME = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(DIRNAME))
 
-
-import subprocess
-import numpy as np
-from typing import List
-from copy import deepcopy
-from scipy.stats import norm
-from utils import gen_configs_recursively_fix, gen_init_config, \
-                refer_core, refer_llc, refer_mb
+from utils import gen_configs_recursively_fix, gen_init_config,\
+    perform_resource_partitioning, get_now_ipc, LatinSample, get_best_config
 
 
 def inter_group_ini_opt(group_list:List[List[str]], rounds:int, app_list:List[str]):
